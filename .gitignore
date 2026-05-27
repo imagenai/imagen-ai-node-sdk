@@ -3,3 +3,6 @@ dist/
 coverage/
 *.env
 .DS_Store
+.idea/
+docs/
+examples/sample_photos
