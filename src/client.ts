@@ -1,14 +1,16 @@
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import pLimit from "p-limit";
-import { AuthenticationError, ImagenError, UploadError } from "./errors";
+import { AuthenticationError, ImagenError, UploadError, DownloadError } from "./errors";
 import { ProjectError } from "./errors";
 import {
   ProjectCreationResponseSchema,
   ProfileApiDataSchema,
   PresignedUrlResponseSchema,
   StatusResponseSchema,
+  DownloadLinksResponseSchema,
   type Profile,
   type UploadSummary,
   type UploadResult,
@@ -16,7 +18,7 @@ import {
   type EditOptions,
 } from "./models";
 import { PhotographyType } from "./enums";
-import { isValidImageFile } from "./utils";
+import { isValidImageFile, extractFilenameFromUrl } from "./utils";
 
 export interface Logger {
   debug(msg: string): void;
@@ -51,6 +53,12 @@ export interface EditingOptions {
 export interface ExportOptions {
   signal?: AbortSignal;
   pollIntervalMs?: number;
+}
+
+export interface DownloadOptions {
+  maxConcurrent?: number;
+  signal?: AbortSignal;
+  onProgress?: ProgressCallback;
 }
 
 const DEFAULT_BASE_URL = "https://api-beta.imagen-ai.com/v1";
@@ -243,6 +251,87 @@ export class ImagenClient {
       ...(signal ? { signal } : {}),
       ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
     });
+  }
+
+  async getDownloadLinks(projectUuid: string): Promise<string[]> {
+    this.logger.debug(`Getting download links for project ${projectUuid}`);
+    const json = await this._makeRequest(
+      "GET",
+      `/projects/${projectUuid}/edit/get_temporary_download_links`
+    );
+    const parsed = DownloadLinksResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new ProjectError(`Could not parse download links: ${parsed.error.message}`);
+    }
+    const links = parsed.data.data.files_list.map((f) => f.downloadLink);
+    this.logger.info(`Retrieved ${links.length} download links`);
+    return links;
+  }
+
+  async getExportLinks(projectUuid: string): Promise<string[]> {
+    this.logger.debug(`Getting export links for project ${projectUuid}`);
+    const json = await this._makeRequest(
+      "GET",
+      `/projects/${projectUuid}/export/get_temporary_download_links`
+    );
+    const parsed = DownloadLinksResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new ProjectError(`Could not parse export links: ${parsed.error.message}`);
+    }
+    const links = parsed.data.data.files_list.map((f) => f.downloadLink);
+    this.logger.info(`Retrieved ${links.length} export links`);
+    return links;
+  }
+
+  async downloadFiles(
+    downloadLinks: string[],
+    outputDir: string,
+    options: DownloadOptions = {}
+  ): Promise<string[]> {
+    const { maxConcurrent = 5, signal, onProgress } = options;
+    if (maxConcurrent < 1) throw new Error("maxConcurrent must be at least 1");
+    if (downloadLinks.length === 0) throw new DownloadError("No download links provided.");
+
+    await fsp.mkdir(outputDir, { recursive: true });
+    this.logger.info(`Downloading ${downloadLinks.length} files to ${outputDir}`);
+
+    const limit = pLimit(maxConcurrent);
+    const total = downloadLinks.length;
+
+    const results = await Promise.all(
+      downloadLinks.map((url, index) =>
+        limit(async (): Promise<string | null> => {
+          if (signal?.aborted) return null;
+          onProgress?.(index, total, `Starting download ${index + 1}`);
+          try {
+            const filename = extractFilenameFromUrl(url, index);
+            const localPath = path.join(outputDir, filename);
+
+            const fetchOptions: RequestInit = { ...(signal ? { signal } : {}) };
+            const response = await fetch(url, fetchOptions);
+            if (!response.ok) {
+              throw new DownloadError(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const buffer = await response.arrayBuffer();
+            await fsp.writeFile(localPath, Buffer.from(buffer));
+
+            this.logger.debug(`Downloaded: ${filename}`);
+            onProgress?.(index + 1, total, filename);
+            return localPath;
+          } catch (err) {
+            this.logger.error(`Failed to download file ${index + 1}: ${String(err)}`);
+            onProgress?.(index + 1, total, `Failed: ${String(err)}`);
+            return null;
+          }
+        })
+      )
+    );
+
+    const successful = results.filter((p): p is string => p !== null);
+    if (successful.length === 0) throw new DownloadError("Failed to download any files.");
+
+    this.logger.info(`Downloaded ${successful.length}/${total} files`);
+    return successful;
   }
 
   private async _waitForCompletion(
