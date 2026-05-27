@@ -220,9 +220,11 @@ export class ImagenClient {
   async startEditing(projectUuid: string, options: EditingOptions): Promise<StatusDetails> {
     const { profileKey, photographyType, editOptions, signal, pollIntervalMs } = options;
 
-    const body: Record<string, unknown> = { profile_key: profileKey };
-    if (photographyType) body["photography_type"] = photographyType;
-    if (editOptions) Object.assign(body, editOptions);
+    const body: Record<string, unknown> = {
+      profile_key: profileKey,
+      ...(photographyType ? { photography_type: photographyType } : {}),
+      ...(editOptions ?? {}),
+    };
 
     this.logger.info(
       `Starting editing for project ${projectUuid} with profile ${profileKey}`
