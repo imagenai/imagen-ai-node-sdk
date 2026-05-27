@@ -8,10 +8,14 @@ import {
   ProjectCreationResponseSchema,
   ProfileApiDataSchema,
   PresignedUrlResponseSchema,
+  StatusResponseSchema,
   type Profile,
   type UploadSummary,
   type UploadResult,
+  type StatusDetails,
+  type EditOptions,
 } from "./models";
+import { PhotographyType } from "./enums";
 import { isValidImageFile } from "./utils";
 
 export interface Logger {
@@ -34,6 +38,19 @@ export interface UploadOptions {
   calculateMd5?: boolean;
   signal?: AbortSignal;
   onProgress?: ProgressCallback;
+}
+
+export interface EditingOptions {
+  profileKey: number;
+  photographyType?: PhotographyType;
+  editOptions?: EditOptions;
+  signal?: AbortSignal;
+  pollIntervalMs?: number;
+}
+
+export interface ExportOptions {
+  signal?: AbortSignal;
+  pollIntervalMs?: number;
 }
 
 const DEFAULT_BASE_URL = "https://api-beta.imagen-ai.com/v1";
@@ -190,6 +207,112 @@ export class ImagenClient {
 
     this.logger.info(`Upload complete: ${summary.successful}/${summary.total} successful`);
     return summary;
+  }
+
+  async startEditing(projectUuid: string, options: EditingOptions): Promise<StatusDetails> {
+    const { profileKey, photographyType, editOptions, signal, pollIntervalMs } = options;
+
+    const body: Record<string, unknown> = { profile_key: profileKey };
+    if (photographyType) body["photography_type"] = photographyType;
+    if (editOptions) Object.assign(body, editOptions);
+
+    this.logger.info(
+      `Starting editing for project ${projectUuid} with profile ${profileKey}`
+    );
+
+    // The Imagen API's edit endpoint does not expect Content-Type header
+    await this._makeRequest("POST", `/projects/${projectUuid}/edit`, {
+      json: body,
+      ...(signal ? { signal } : {}),
+      headers: { "Content-Type": "" },
+    });
+
+    return this._waitForCompletion(projectUuid, "edit", {
+      ...(signal ? { signal } : {}),
+      ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+    });
+  }
+
+  async exportProject(projectUuid: string, options: ExportOptions = {}): Promise<StatusDetails> {
+    const { signal, pollIntervalMs } = options;
+    this.logger.info(`Starting export for project ${projectUuid}`);
+    await this._makeRequest("POST", `/projects/${projectUuid}/export`, {
+      ...(signal ? { signal } : {}),
+    });
+    return this._waitForCompletion(projectUuid, "export", {
+      ...(signal ? { signal } : {}),
+      ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+    });
+  }
+
+  private async _waitForCompletion(
+    projectUuid: string,
+    operation: "edit" | "export",
+    options: { signal?: AbortSignal; pollIntervalMs?: number }
+  ): Promise<StatusDetails> {
+    const { signal, pollIntervalMs = 10_000 } = options;
+    const MAX_WAIT_MS = 72_000_000; // 20 hours
+    const MAX_INTERVAL_MS = 60_000;
+    let interval = pollIntervalMs;
+    const startedAt = Date.now();
+
+    this.logger.info(`Waiting for ${operation} to complete...`);
+
+    while (true) {
+      if (signal?.aborted) throw new ProjectError(`${operation} aborted`);
+
+      if (Date.now() - startedAt > MAX_WAIT_MS) {
+        throw new ProjectError(
+          `${operation} timed out after ${MAX_WAIT_MS / 1000}s`
+        );
+      }
+
+      const json = await this._makeRequest(
+        "GET",
+        `/projects/${projectUuid}/${operation}/status`,
+        { ...(signal ? { signal } : {}) }
+      );
+
+      const parsed = StatusResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new ProjectError(
+          `Could not parse ${operation} status: ${parsed.error.message}`
+        );
+      }
+
+      const details = parsed.data.data;
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      const progressStr = details.progress !== null ? ` (${details.progress}%)` : "";
+      this.logger.info(
+        `  ${operation} status: ${details.status}${progressStr} — elapsed ${elapsed}s`
+      );
+
+      if (details.status === "Completed") {
+        this.logger.info(`${operation} completed successfully`);
+        return details;
+      }
+
+      if (details.status === "Failed") {
+        const msg = details.details ? ` Details: ${details.details}` : "";
+        throw new ProjectError(`${operation} failed.${msg}`);
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, interval);
+        if (signal) {
+          signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t);
+              reject(new ProjectError(`${operation} aborted`));
+            },
+            { once: true }
+          );
+        }
+      });
+
+      interval = Math.min(interval * 1.2, MAX_INTERVAL_MS);
+    }
   }
 
   private _uploadToS3(filePath: string, uploadUrl: string, signal?: AbortSignal): Promise<void> {
