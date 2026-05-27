@@ -26,7 +26,8 @@ export function isJpgFile(filePath: string): boolean {
 export function extractFilenameFromUrl(url: string, index: number): string {
   try {
     const parsed = new URL(url);
-    const filename = path.basename(decodeURIComponent(parsed.pathname));
+    const rawFilename = path.basename(decodeURIComponent(parsed.pathname));
+    const filename = rawFilename.replace(/[/\\]/g, "");
     if (filename && filename.includes(".") && filename.length > 1) {
       return filename;
     }
