@@ -61,9 +61,16 @@ export class ImagenClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, controller.signal])
-      : controller.signal;
+    // AbortSignal.any() is Node 20.3+ only — propagate manually for Node 18 compatibility
+    let abortListener: (() => void) | null = null;
+    if (options.signal) {
+      if (options.signal.aborted) {
+        clearTimeout(timeoutId);
+        throw new ImagenError("Request aborted");
+      }
+      abortListener = () => controller.abort(options.signal!.reason);
+      options.signal.addEventListener("abort", abortListener, { once: true });
+    }
 
     try {
       const headers: Record<string, string> = {
@@ -78,14 +85,17 @@ export class ImagenClient {
 
       this.logger.debug(`${method} ${url}`);
 
-      const response = await fetch(url, {
+      const fetchOptions: RequestInit = {
         method,
         headers,
-        ...(options.json !== undefined && { body: JSON.stringify(options.json) }),
-        signal,
-      });
+        signal: controller.signal,
+      };
+      if (options.json !== undefined) {
+        fetchOptions.body = JSON.stringify(options.json);
+      }
 
-      clearTimeout(timeoutId);
+      const response = await fetch(url, fetchOptions);
+
       this.logger.debug(`Response: ${response.status}`);
 
       if (response.status === 401) {
@@ -107,9 +117,13 @@ export class ImagenClient {
       if (response.status === 204) return {};
       return await response.json();
     } catch (err) {
-      clearTimeout(timeoutId);
       if (err instanceof ImagenError) throw err;
       throw new ImagenError(`Request failed: ${String(err)}`);
+    } finally {
+      clearTimeout(timeoutId);
+      if (abortListener && options.signal) {
+        options.signal.removeEventListener("abort", abortListener);
+      }
     }
   }
 }
