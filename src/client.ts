@@ -1,4 +1,10 @@
 import { AuthenticationError, ImagenError } from "./errors";
+import { ProjectError } from "./errors";
+import {
+  ProjectCreationResponseSchema,
+  ProfileApiDataSchema,
+  type Profile,
+} from "./models";
 
 export interface Logger {
   debug(msg: string): void;
@@ -46,6 +52,37 @@ export class ImagenClient {
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.close();
+  }
+
+  async createProject(name?: string): Promise<string> {
+    const body: Record<string, string> = {};
+    if (name) body["name"] = name;
+
+    this.logger.info(`Creating project: ${name ?? "unnamed"}`);
+    const json = await this._makeRequest("POST", "/projects/", { json: body });
+
+    const parsed = ProjectCreationResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new ProjectError(
+        `Could not parse project creation response: ${parsed.error.message}`
+      );
+    }
+    const uuid = parsed.data.data.projectUuid;
+    this.logger.info(`Project created: ${uuid}`);
+    return uuid;
+  }
+
+  async getProfiles(): Promise<Profile[]> {
+    this.logger.debug("Fetching profiles");
+    const json = await this._makeRequest("GET", "/profiles");
+
+    const parsed = ProfileApiDataSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new ImagenError(`Failed to parse profiles: ${parsed.error.message}`);
+    }
+    const profiles = parsed.data.data.profiles;
+    this.logger.info(`Retrieved ${profiles.length} profiles`);
+    return profiles;
   }
 
   protected async _makeRequest(
