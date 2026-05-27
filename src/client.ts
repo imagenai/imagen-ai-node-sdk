@@ -297,6 +297,15 @@ export class ImagenClient {
         throw new ProjectError(`${operation} failed.${msg}`);
       }
 
+      // Warn on unexpected status values so a server-side bug produces a visible log
+      // rather than a silent 20-hour hang
+      const KNOWN_STATUSES = new Set(["Completed", "Failed", "Processing", "Queued", "Pending"]);
+      if (!KNOWN_STATUSES.has(details.status)) {
+        this.logger.warn(
+          `Unexpected ${operation} status: "${details.status}" — continuing to poll`
+        );
+      }
+
       await new Promise<void>((resolve, reject) => {
         const t = setTimeout(resolve, interval);
         if (signal) {
