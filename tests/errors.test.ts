@@ -38,4 +38,41 @@ describe("Error hierarchy", () => {
     expect(err).toBeInstanceOf(ImagenError);
     expect(err.name).toBe("DownloadError");
   });
+
+  it("error subclasses are not instanceof each other", () => {
+    const authErr = new AuthenticationError("auth");
+    const projErr = new ProjectError("proj");
+    const uploadErr = new UploadError("upload");
+    const downloadErr = new DownloadError("download");
+
+    expect(authErr instanceof ProjectError).toBe(false);
+    expect(projErr instanceof AuthenticationError).toBe(false);
+    expect(uploadErr instanceof DownloadError).toBe(false);
+    expect(downloadErr instanceof UploadError).toBe(false);
+  });
+
+  it("subclasses preserve message correctly", () => {
+    expect(new AuthenticationError("bad key").message).toBe("bad key");
+    expect(new ProjectError("project failed").message).toBe("project failed");
+    expect(new UploadError("upload failed").message).toBe("upload failed");
+    expect(new DownloadError("download failed").message).toBe("download failed");
+  });
+
+  it("instanceof works correctly in catch blocks", () => {
+    const errors = [
+      new AuthenticationError("a"),
+      new ProjectError("p"),
+      new UploadError("u"),
+      new DownloadError("d"),
+    ];
+
+    for (const err of errors) {
+      try {
+        throw err;
+      } catch (e) {
+        expect(e instanceof ImagenError).toBe(true);
+        expect(e instanceof Error).toBe(true);
+      }
+    }
+  });
 });
