@@ -108,7 +108,9 @@ export async function quickEdit(
 
   const client = new ImagenClient(apiKey, { ...(baseUrl !== undefined ? { baseUrl } : {}) });
   try {
-    const profile = await getProfile(apiKey, profileKey, baseUrl);
+    const profiles = await client.getProfiles();
+    const profile = profiles.find((p) => p.profileKey === profileKey);
+    if (!profile) throw new UploadError(`Profile with key ${profileKey} not found.`);
     checkFilesMatchProfileType(imagePaths, profile);
 
     const projectUuid = await client.createProject(projectName);
