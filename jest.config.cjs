@@ -7,6 +7,9 @@ const config = {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "tsconfig.test.json" }],
     "^.+\\.js$": ["ts-jest", { tsconfig: "tsconfig.test.json" }],
   },
+  moduleNameMapper: {
+    "^(\\.{1,2}/.*)\\.js$": "$1",
+  },
   transformIgnorePatterns: [
     "/node_modules/(?!(p-limit|yocto-queue)/)",
   ],

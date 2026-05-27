@@ -1,8 +1,8 @@
-import { ImagenClient, type UploadOptions, type DownloadOptions, type EditingOptions } from "./client";
-import { UploadError } from "./errors";
-import { PhotographyType } from "./enums";
-import type { Profile, QuickEditResult, UploadSummary, EditOptions } from "./models";
-import { isRawFile, isJpgFile } from "./utils";
+import { ImagenClient, type UploadOptions, type DownloadOptions, type EditingOptions } from "./client.js";
+import { UploadError } from "./errors.js";
+import { PhotographyType } from "./enums.js";
+import type { Profile, QuickEditResult, UploadSummary, EditOptions } from "./models.js";
+import { isRawFile, isJpgFile } from "./utils.js";
 
 export function checkFilesMatchProfileType(filePaths: string[], profile: Profile): void {
   const typeLabel = profile.imageType.toUpperCase();

@@ -3,8 +3,8 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import pLimit from "p-limit";
-import { AuthenticationError, ImagenError, UploadError, DownloadError } from "./errors";
-import { ProjectError } from "./errors";
+import { AuthenticationError, ImagenError, UploadError, DownloadError } from "./errors.js";
+import { ProjectError } from "./errors.js";
 import {
   ProjectCreationResponseSchema,
   ProfileApiDataSchema,
@@ -16,9 +16,9 @@ import {
   type UploadResult,
   type StatusDetails,
   type EditOptions,
-} from "./models";
-import { PhotographyType } from "./enums";
-import { isValidImageFile, extractFilenameFromUrl } from "./utils";
+} from "./models.js";
+import { PhotographyType } from "./enums.js";
+import { isValidImageFile, extractFilenameFromUrl } from "./utils.js";
 
 export interface Logger {
   debug(msg: string): void;
