@@ -180,4 +180,51 @@ describe("ImagenClient.uploadImages", () => {
     const s3CallMethod = (global.fetch as jest.Mock).mock.calls[1][1].method;
     expect(s3CallMethod).toBe("PUT");
   });
+
+  it("calculates md5 and includes it when calculateMd5=true", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          data: {
+            files_list: [{ file_name: "photo.cr2", upload_link: "https://s3.example.com/u" }],
+          },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({}) } as unknown as Response);
+
+    const summary = await client.uploadImages("proj-123", [testFile], { calculateMd5: true });
+    expect(summary.successful).toBe(1);
+
+    const presignedBody = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(presignedBody.files_list[0]).toHaveProperty("md5");
+  });
+
+  it("skips invalid (non-existent) paths with a warning", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          data: {
+            files_list: [{ file_name: "photo.cr2", upload_link: "https://s3.example.com/u" }],
+          },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({}) } as unknown as Response);
+
+    const warns: string[] = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: (msg: string) => warns.push(msg),
+      error: () => {},
+    };
+    const c = new (client.constructor as typeof ImagenClient)("test-key", { logger });
+    const summary = await c.uploadImages("proj-123", ["/totally/nonexistent/photo.cr2", testFile]);
+    expect(summary.total).toBe(1);
+    expect(warns.some((w) => w.includes("nonexistent"))).toBe(true);
+    await c.close();
+  });
 });

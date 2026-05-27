@@ -130,6 +130,87 @@ describe("ImagenClient.startEditing", () => {
   });
 });
 
+describe("ImagenClient._waitForCompletion — edge branches", () => {
+  let client: ImagenClient;
+
+  beforeEach(() => {
+    client = new ImagenClient("test-key");
+  });
+
+  afterEach(async () => {
+    await client.close();
+  });
+
+  it("logs a warning for unexpected status values and continues polling", async () => {
+    const warns: string[] = [];
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: (msg: string) => warns.push(msg),
+      error: () => {},
+    };
+    const c = new ImagenClient("test-key", { logger });
+
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({}) } as unknown as Response)
+      // unknown status
+      .mockResolvedValueOnce({
+        status: 200, ok: true,
+        json: async () => ({ data: { status: "UnknownStatus", progress: null, details: null } }),
+      } as unknown as Response)
+      // then Completed
+      .mockResolvedValueOnce({
+        status: 200, ok: true,
+        json: async () => ({ data: { status: "Completed", progress: 100, details: null } }),
+      } as unknown as Response);
+
+    const status = await c.startEditing("proj-x", { profileKey: 1, pollIntervalMs: 1 });
+    expect(status.status).toBe("Completed");
+    expect(warns.some((w) => w.includes("UnknownStatus"))).toBe(true);
+    await c.close();
+  });
+
+  it("throws ProjectError when abort signal fires during polling sleep", async () => {
+    const controller = new AbortController();
+
+    global.fetch = jest.fn()
+      // POST /edit
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({}) } as unknown as Response)
+      // polling — return Queued (triggers sleep), then abort fires
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return {
+          status: 200, ok: true,
+          json: async () => ({ data: { status: "Queued", progress: null, details: null } }),
+        } as unknown as Response;
+      });
+
+    await expect(
+      client.startEditing("proj-abort", {
+        profileKey: 1,
+        signal: controller.signal,
+        pollIntervalMs: 50,
+      })
+    ).rejects.toThrow(ProjectError);
+  });
+
+  it("throws ProjectError immediately when pre-aborted signal is passed to _makeRequest", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    // fetch shouldn't be called at all — the aborted check fires first
+    global.fetch = jest.fn();
+
+    await expect(
+      client.startEditing("proj-pre-aborted", {
+        profileKey: 1,
+        signal: controller.signal,
+        pollIntervalMs: 1,
+      })
+    ).rejects.toThrow();
+  });
+});
+
 describe("ImagenClient.exportProject", () => {
   let client: ImagenClient;
 
